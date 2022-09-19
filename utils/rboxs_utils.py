@@ -1,10 +1,42 @@
 """
 Oriented Bounding Boxes utils
 """
+from typing import List, Tuple
+
 import numpy as np
 pi = 3.141592
 import cv2
 import torch
+
+
+def compute_len_side(poly: np.array) -> List[float]:
+    """
+    Compute the lengths of each side in polygon (rotated rectangle)
+    :param poly: 1D array of oriented rectangle corners in format [x1, y1, x2, y2, x3, y3, x4, y4]
+    :return: list with the lengths of different sides
+    """
+    len_lines = []
+    for k in range(0, 8, 2):
+        j = (k + 2) % 8
+
+        diff_x = (poly[k] - poly[j]) ** 2
+        diff_y = (poly[k + 1] - poly[j + 1]) ** 2
+        len_lines.append(np.sqrt(diff_x + diff_y))
+    return len_lines
+
+
+def get_two_min(lengths: List[float]) -> Tuple[int, int]:
+    """
+    Get the two minimum lengths index in a list of vector norms
+    Ex. input [50, 51, 109, 123]  --> output [0, 1]
+    :param lengths: norm of 4 vectors
+    :return: index of the two smallest vectors in terms of length
+    """
+    min_index1 = lengths.index(min(lengths))
+    lengths[min_index1] = np.inf
+    min_index2 = lengths.index(min(lengths))
+    return min_index1, min_index2
+
 
 def gaussian_label_cpu(label, num_class, u=0, sig=4.0):
     """

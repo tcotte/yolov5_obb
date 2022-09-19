@@ -7,6 +7,7 @@ import math
 import os
 from copy import copy
 from pathlib import Path
+from typing import Tuple
 
 import cv2
 import matplotlib
@@ -20,7 +21,7 @@ from PIL import Image, ImageDraw, ImageFont
 from utils.general import (LOGGER, Timeout, check_requirements, clip_coords, increment_path, is_ascii, is_chinese,
                            try_except, user_config_dir, xywh2xyxy, xyxy2xywh)
 from utils.metrics import fitness
-from utils.rboxs_utils import poly2hbb, poly2rbox, rbox2poly
+from utils.rboxs_utils import poly2hbb, poly2rbox, rbox2poly, get_two_min, compute_len_side
 
 # Settings
 CONFIG_DIR = user_config_dir()  # Ultralytics settings dir
@@ -109,7 +110,7 @@ class Annotator:
                 cv2.rectangle(self.im, p1, p2, color, -1, cv2.LINE_AA)  # filled
                 cv2.putText(self.im, label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), 0, self.lw / 3, txt_color,
                             thickness=tf, lineType=cv2.LINE_AA)
-    
+
     def poly_label(self, poly, label='', color=(128, 128, 128), txt_color=(255, 255, 255)):
         # if self.pil or not is_ascii(label):
         #     self.draw.polygon(xy=poly, outline=color)
@@ -124,26 +125,56 @@ class Annotator:
         #                              y_label + 1 if outside else y_label + h + 1], fill=color)
         #         self.draw.text((x_label, y_label - h if outside else y_label), label, fill=txt_color, font=self.font)
         # else:
-            if isinstance(poly, torch.Tensor):
-                poly = poly.cpu().numpy()
-            if isinstance(poly[0], torch.Tensor):
-                poly = [x.cpu().numpy() for x in poly]
-            polygon_list = np.array([(poly[0], poly[1]), (poly[2], poly[3]), \
-                    (poly[4], poly[5]), (poly[6], poly[7])], np.int32)
-            cv2.drawContours(image=self.im_cv2, contours=[polygon_list], contourIdx=-1, color=color, thickness=self.lw)
-            if label:
-                tf = max(self.lw - 1, 1)  # font thicknes
-                xmax, xmin, ymax, ymin = max(poly[0::2]), min(poly[0::2]), max(poly[1::2]), min(poly[1::2])
-                x_label, y_label = int((xmax + xmin)/2), int((ymax + ymin)/2)
-                w, h = cv2.getTextSize(label, 0, fontScale=self.lw / 3, thickness=tf)[0]  # text width, height
-                cv2.rectangle(
-                                self.im_cv2,
-                                (x_label, y_label),
-                                (x_label + w + 1, y_label + int(1.5*h)),
-                                color, -1, cv2.LINE_AA
-                            )
-                cv2.putText(self.im_cv2, label, (x_label, y_label + h), 0, self.lw / 3, txt_color, thickness=tf, lineType=cv2.LINE_AA)
-            self.im = self.im_cv2 if isinstance(self.im_cv2, Image.Image) else Image.fromarray(self.im_cv2)
+        if isinstance(poly, torch.Tensor):
+            poly = poly.cpu().numpy()
+        if isinstance(poly[0], torch.Tensor):
+            poly = [x.cpu().numpy() for x in poly]
+        polygon_list = np.array([(poly[0], poly[1]), (poly[2], poly[3]), \
+                                 (poly[4], poly[5]), (poly[6], poly[7])], np.int32)
+        cv2.drawContours(image=self.im_cv2, contours=[polygon_list], contourIdx=-1, color=color, thickness=self.lw)
+        if label:
+            tf = max(self.lw - 1, 1)  # font thicknes
+            xmax, xmin, ymax, ymin = max(poly[0::2]), min(poly[0::2]), max(poly[1::2]), min(poly[1::2])
+            x_label, y_label = int((xmax + xmin) / 2), int((ymax + ymin) / 2)
+            w, h = cv2.getTextSize(label, 0, fontScale=self.lw / 3, thickness=tf)[0]  # text width, height
+            cv2.rectangle(
+                self.im_cv2,
+                (x_label, y_label),
+                (x_label + w + 1, y_label + int(1.5 * h)),
+                color, -1, cv2.LINE_AA
+            )
+            cv2.putText(self.im_cv2, label, (x_label, y_label + h), 0, self.lw / 3, txt_color, thickness=tf,
+                        lineType=cv2.LINE_AA)
+        self.im = self.im_cv2 if isinstance(self.im_cv2, Image.Image) else Image.fromarray(self.im_cv2)
+
+
+
+    def symmetric_ax(self, poly: torch.Tensor, color: Tuple[int] = (128, 128, 128)) -> None:
+        """
+        Draw principal axis of bouding box
+        :param poly: list of oriented rectangle corners in format [x1, y1, x2, y2, x3, y3, x4, y4]
+        :param color: RGB color of principal axis line
+        """
+        if isinstance(poly, torch.Tensor):
+            poly = poly.cpu().numpy()
+        if isinstance(poly[0], torch.Tensor):
+            poly = [x.cpu().numpy() for x in poly]
+
+        len_lines = compute_len_side(poly)
+        index_width = get_two_min(len_lines)
+
+        # Get the mid of the smallest side in terms of length
+        pts = []
+        for i in index_width:
+            j = (i * 2 + 2) % 8
+
+            mid_x = round((poly[i * 2] + poly[j]) / 2)
+            mid_y = round((poly[i * 2 + 1] + poly[j + 1]) / 2)
+            pts.append((mid_x, mid_y))
+        # Draw line from the mid of one side to the other
+        cv2.line(self.im_cv2, pts[0], pts[1], color=color, thickness=2 * self.lw)
+
+        self.im = self.im_cv2 if isinstance(self.im_cv2, Image.Image) else Image.fromarray(self.im_cv2)
 
     def rectangle(self, xy, fill=None, outline=None, width=1):
         # Add rectangle to image (PIL-only)
@@ -209,7 +240,7 @@ def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
     return filtfilt(b, a, data)  # forward-backward filter
 
 
-def output_to_target(output): #list*(n, [xylsθ, conf, cls]) θ ∈ [-pi/2, pi/2)
+def output_to_target(output):  # list*(n, [xylsθ, conf, cls]) θ ∈ [-pi/2, pi/2)
     # Convert model output to target format [batch_id, class_id, x, y, l, s, theta, conf]
     targets = []
     for i, o in enumerate(output):
@@ -299,9 +330,10 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 color = colors(cls)
                 cls = names[cls] if names else cls
                 if labels or conf[j] > 0.25:  # 0.25 conf thresh
-                    label = f'{cls}' if labels else f'{cls} {conf[j]:.1f}'   
+                    label = f'{cls}' if labels else f'{cls} {conf[j]:.1f}'
                     annotator.poly_label(poly, label, color=color)
     annotator.im.save(fname)  # save
+
 
 def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=''):
     # Plot LR simulating training for full epochs
@@ -363,7 +395,8 @@ def plot_val_study(file='', dir='', x=None):  # from utils.plots import *; plot_
         y = np.loadtxt(f, dtype=np.float32, usecols=[0, 1, 2, 3, 7, 8, 9], ndmin=2).T
         x = np.arange(y.shape[1]) if x is None else np.array(x)
         if plot2:
-            s = ['P', 'R', 'HBBmAP@.5', 'HBBmAP@.5:.95', 't_preprocess (ms/img)', 't_inference (ms/img)', 't_NMS (ms/img)']
+            s = ['P', 'R', 'HBBmAP@.5', 'HBBmAP@.5:.95', 't_preprocess (ms/img)', 't_inference (ms/img)',
+                 't_NMS (ms/img)']
             for i in range(7):
                 ax[i].plot(x, y[i], '.-', linewidth=2, markersize=8)
                 ax[i].set_title(s[i])
@@ -391,7 +424,7 @@ def plot_val_study(file='', dir='', x=None):  # from utils.plots import *; plot_
 @Timeout(30)  # known issue https://github.com/ultralytics/yolov5/issues/5611
 def plot_labels(labels, names=(), save_dir=Path(''), img_size=1024):
     rboxes = poly2rbox(labels[:, 1:])
-    labels = np.concatenate((labels[:, :1], rboxes[:, :-1]), axis=1) # [cls xyls]
+    labels = np.concatenate((labels[:, :1], rboxes[:, :-1]), axis=1)  # [cls xyls]
 
     # plot dataset labels
     LOGGER.info(f"Plotting labels to {save_dir / 'labels_xyls.jpg'}... ")
@@ -420,9 +453,9 @@ def plot_labels(labels, names=(), save_dir=Path(''), img_size=1024):
 
     # rectangles
     # labels[:, 1:3] = 0.5 # center
-    labels[:, 1:3] = 0.5 * img_size # center
+    labels[:, 1:3] = 0.5 * img_size  # center
     # labels[:, 1:] = xywh2xyxy(labels[:, 1:]) * 2000
-    labels[:, 1:] = xywh2xyxy(labels[:, 1:]) 
+    labels[:, 1:] = xywh2xyxy(labels[:, 1:])
     # img = Image.fromarray(np.ones((2000, 2000, 3), dtype=np.uint8) * 255)
     img = Image.fromarray(np.ones((img_size, img_size, 3), dtype=np.uint8) * 255)
     for cls, *box in labels[:1000]:
@@ -468,7 +501,7 @@ def plot_evolve(evolve_csv='path/to/evolve.csv'):  # from utils.plots import *; 
 def plot_results(file='path/to/results.csv', dir=''):
     # Plot training results.csv. Usage: from utils.plots import *; plot_results('path/to/results.csv')
     save_dir = Path(file).parent if file else Path(dir)
-    #fig, ax = plt.subplots(2, 5, figsize=(12, 6), tight_layout=True)
+    # fig, ax = plt.subplots(2, 5, figsize=(12, 6), tight_layout=True)
     fig, ax = plt.subplots(2, 6, figsize=(18, 6), tight_layout=True)
     ax = ax.ravel()
     files = list(save_dir.glob('results*.csv'))
@@ -478,7 +511,7 @@ def plot_results(file='path/to/results.csv', dir=''):
             data = pd.read_csv(f)
             s = [x.strip() for x in data.columns]
             x = data.values[:, 0]
-            #for i, j in enumerate([1, 2, 3, 4, 5, 8, 9, 10, 6, 7]):
+            # for i, j in enumerate([1, 2, 3, 4, 5, 8, 9, 10, 6, 7]):
             for i, j in enumerate([1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 7, 8]):
                 y = data.values[:, j]
                 # y[y == 0] = np.nan  # don't show zero values
