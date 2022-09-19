@@ -165,7 +165,8 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
                         # annotator.box_label(xyxy, label, color=colors(c, True))
-                        annotator.poly_label(poly, label, color=colors(c, True))
+                        # annotator.poly_label(poly, label, color=colors(c, True))
+                        annotator.symmetric_ax(poly, color=colors(c, True))
                         if save_crop: # Yolov5-obb doesn't support it yet
                             # save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
                             pass
