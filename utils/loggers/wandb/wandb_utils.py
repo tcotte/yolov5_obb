@@ -105,19 +105,24 @@ def process_wandb_config_ddp_mode(opt):
         opt.data = ddp_data_path
 
 
-def get_mask(polylines, image) -> np.ndarray:
+def get_mask(polylines, classes, image, nb_classes) -> np.ndarray:
     """
-    Create a mask for one class segmentation
-    :param polylines:
-    :param image:
-    :return:
+    Create a mask to realize segmentation on all classes.
+    Firstly, the function creates a mask full of value superior to the number of classes (the background belongs to not
+    any class).
+    Then, oriented bounding boxes will overlap the mask with the color belonging to its respective class.
+    :param nb_classes: number of classes in the dataset
+    :param classes: list of classes represented by the bounding boxes
+    :param polylines: list of oriented bounding boxes
+    :param image: validation picture in which we are making predictions
+    :return: segmented mask
     """
-    mask = np.zeros((image.shape[1:]), dtype=np.int32)
+    mask = np.full(shape=(image.shape[1:]), fill_value=nb_classes + 1, dtype=np.int32)
 
-    for pts in polylines:
+    for pts, cls in zip(polylines, classes):
         pts = np.array([(pts[0], pts[1]), (pts[2], pts[3]), (pts[4], pts[5]), (pts[6], pts[7])], np.int32).reshape(
             -1, 1, 2)
-        mask = cv2.fillPoly(mask, [pts], 1)
+        mask = cv2.fillPoly(mask, [pts], cls)
     return mask
 
 
@@ -513,7 +518,8 @@ class WandbLogger():
 
                 # Add masks
                 *polylines, conf, cls = pred_poly.tolist()
-                masks = {"predictions": {"mask_data": get_mask(polylines=polylines, image=im), "class_labels": names}}
+                masks = {"predictions": {"mask_data": get_mask(polylines=polylines, classes=cls, image=im,
+                                                               nb_classes=len(names)), "class_labels": names}}
                 self.mask_media_panel_images.append(wandb.Image(im, masks=masks, caption=path.name))
 
     def log(self, log_dict):
