@@ -256,7 +256,7 @@ def run(data,
             if save_json: # save hbb pred results and poly pred results.
                 save_one_json(pred_hbbn, pred_polyn, jdict, path, class_map)  # append to COCO-JSON dictionary
                 # LOGGER.info('The hbb and obb results has been saved in json file')
-            callbacks.run('on_val_image_end', pred_hbb, pred_hbbn, path, names, im[si])
+            callbacks.run('on_val_image_end', pred_poly, pred_hbb, pred_hbbn, path, names, im[si])
 
         # Plot images
         if plots and batch_i < 3:

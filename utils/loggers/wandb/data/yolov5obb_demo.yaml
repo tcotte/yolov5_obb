@@ -1,0 +1,5 @@
+names:
+- Cotton
+nc: 1
+train: wandb-artifact://YOLOv5\train
+val: wandb-artifact://YOLOv5\val

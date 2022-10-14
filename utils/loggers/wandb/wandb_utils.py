@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict
 
+import cv2
+import numpy as np
 import yaml
 from tqdm import tqdm
 
@@ -103,6 +105,22 @@ def process_wandb_config_ddp_mode(opt):
         opt.data = ddp_data_path
 
 
+def get_mask(polylines, image) -> np.ndarray:
+    """
+    Create a mask for one class segmentation
+    :param polylines:
+    :param image:
+    :return:
+    """
+    mask = np.zeros((image.shape[1:]), dtype=np.int32)
+
+    for pts in polylines:
+        pts = np.array([(pts[0], pts[1]), (pts[2], pts[3]), (pts[4], pts[5]), (pts[6], pts[7])], np.int32).reshape(
+            -1, 1, 2)
+        mask = cv2.fillPoly(mask, [pts], 1)
+    return mask
+
+
 class WandbLogger():
     """Log training runs, datasets, models, and predictions to Weights & Biases.
 
@@ -137,6 +155,7 @@ class WandbLogger():
         self.result_artifact = None
         self.val_table, self.result_table = None, None
         self.bbox_media_panel_images = []
+        self.mask_media_panel_images = []
         self.val_table_path_map = None
         self.max_imgs_to_log = 16
         self.wandb_artifact_data_dict = None
@@ -203,7 +222,7 @@ class WandbLogger():
         config_path = self.log_dataset_artifact(opt.data,
                                                 opt.single_cls,
                                                 'YOLOv5' if opt.project == 'runs/train' else Path(opt.project).stem)
-        with open(config_path, errors='ignore') as f:
+        with open(opt.data, errors='ignore') as f:
             wandb_data_dict = yaml.safe_load(f)
         return wandb_data_dict
 
@@ -343,12 +362,13 @@ class WandbLogger():
         # log train set
         if not log_val_only:
             self.train_artifact = self.create_dataset_table(LoadImagesAndLabels(
-                data['train'], rect=True, batch_size=1), names, name='train') if data.get('train') else None
+                data['train'], cls_names=names, rect=True, batch_size=1), names, name='train') if data.get(
+                'train') else None
             if data.get('train'):
                 data['train'] = WANDB_ARTIFACT_PREFIX + str(Path(project) / 'train')
 
         self.val_artifact = self.create_dataset_table(LoadImagesAndLabels(
-            data['val'], rect=True, batch_size=1), names, name='val') if data.get('val') else None
+            data['val'], cls_names=names, rect=True, batch_size=1), names, name='val') if data.get('val') else None
         if data.get('val'):
             data['val'] = WANDB_ARTIFACT_PREFIX + str(Path(project) / 'val')
 
@@ -359,7 +379,7 @@ class WandbLogger():
             path = Path('data') / path
             data.pop('download', None)
             data.pop('path', None)
-            with open(path, 'w') as f:
+            with open(data_file, 'w') as f:
                 yaml.safe_dump(data, f)
                 LOGGER.info(f"Created dataset config file {path}")
 
@@ -405,8 +425,8 @@ class WandbLogger():
         for img_file in img_files:
             if Path(img_file).is_dir():
                 artifact.add_dir(img_file, name='data/images')
-                labels_path = 'labels'.join(dataset.path.rsplit('images', 1))
-                artifact.add_dir(labels_path, name='data/labels')
+                labels_path = 'labelTxt'.join(dataset.path.rsplit('images', 1))
+                artifact.add_dir(labels_path, name='data/labelTxt')
             else:
                 artifact.add_file(img_file, name='data/images/' + Path(img_file).name)
                 label_file = Path(img2label_paths([img_file])[0])
@@ -469,7 +489,7 @@ class WandbLogger():
                                    *avg_conf_per_class
                                    )
 
-    def val_one_image(self, pred, predn, path, names, im):
+    def val_one_image(self, pred_poly, pred, predn, path, names, im):
         """
         Log validation data for one image. updates the result Table if validation dataset is uploaded and log bbox media panel
 
@@ -490,6 +510,11 @@ class WandbLogger():
                              "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
                 boxes = {"predictions": {"box_data": box_data, "class_labels": names}}  # inference-space
                 self.bbox_media_panel_images.append(wandb.Image(im, boxes=boxes, caption=path.name))
+
+                # Add masks
+                *polylines, conf, cls = pred_poly.tolist()
+                masks = {"predictions": {"mask_data": get_mask(polylines=polylines, image=im), "class_labels": names}}
+                self.mask_media_panel_images.append(wandb.Image(im, masks=masks, caption=path.name))
 
     def log(self, log_dict):
         """
@@ -513,6 +538,7 @@ class WandbLogger():
             with all_logging_disabled():
                 if self.bbox_media_panel_images:
                     self.log_dict["BoundingBoxDebugger"] = self.bbox_media_panel_images
+                    self.log_dict["MaskDebugger"] = self.mask_media_panel_images
                 try:
                     wandb.log(self.log_dict)
                 except BaseException as e:
@@ -523,6 +549,7 @@ class WandbLogger():
 
                 self.log_dict = {}
                 self.bbox_media_panel_images = []
+                self.mask_media_panel_images = []
             if self.result_artifact:
                 self.result_artifact.add(self.result_table, 'result')
                 wandb.log_artifact(self.result_artifact, aliases=['latest', 'last', 'epoch ' + str(self.current_epoch),
