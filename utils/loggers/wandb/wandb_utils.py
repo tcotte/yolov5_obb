@@ -503,6 +503,8 @@ class WandbLogger():
         predn (list): list of predictions in the native space - [xmin, ymin, xmax, ymax, confidence, class]
         path (str): local path of the current evaluation image
         """
+        print(f" names : {names}")
+        print(f" names : {len(names)}")
         if self.val_table and self.result_table:  # Log Table if Val dataset is uploaded as artifact
             self.log_training_progress(predn, path, names)
 
@@ -519,7 +521,7 @@ class WandbLogger():
                 # Add masks
                 *polylines, conf, cls = pred_poly.tolist()
                 masks = {"predictions": {"mask_data": get_mask(polylines=polylines, classes=cls, image=im,
-                                                               nb_classes=len(names)), "class_labels": names}}
+                                                               nb_classes=0), "class_labels": names}}
                 self.mask_media_panel_images.append(wandb.Image(im, masks=masks, caption=path.name))
 
     def log(self, log_dict):
