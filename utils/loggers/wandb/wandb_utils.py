@@ -122,7 +122,7 @@ def get_mask(polylines, classes, image, nb_classes) -> np.ndarray:
     for pts, cls in zip(polylines, classes):
         pts = np.array([(pts[0], pts[1]), (pts[2], pts[3]), (pts[4], pts[5]), (pts[6], pts[7])], np.int32).reshape(
             -1, 1, 2)
-        mask = cv2.fillPoly(mask, [pts], cls)
+        mask = cv2.fillPoly(mask, [pts], int(cls))
     return mask
 
 
@@ -505,6 +505,9 @@ class WandbLogger():
         """
         print(f" names : {names}")
         print(f" names : {len(names)}")
+        pred_poly = pred_poly[pred_poly[:, -2] > 0.35]
+        *polylines, conf, cls = pred_poly.tolist()
+        print(cls)
         if self.val_table and self.result_table:  # Log Table if Val dataset is uploaded as artifact
             self.log_training_progress(predn, path, names)
 
@@ -519,6 +522,7 @@ class WandbLogger():
                 self.bbox_media_panel_images.append(wandb.Image(im, boxes=boxes, caption=path.name))
 
                 # Add masks
+                pred_poly = pred_poly[pred_poly[:, -2] > 0.35]
                 *polylines, conf, cls = pred_poly.tolist()
                 masks = {"predictions": {"mask_data": get_mask(polylines=polylines, classes=cls, image=im,
                                                                nb_classes=0), "class_labels": names}}
